@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BankABC POC Enterprise IT Support Copilot</title>
+    <link href="https://cloudflare.com" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #111827;
+            --bg-secondary: #1f2937;
+            --bg-surface: #374151;
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --accent: #2563eb;
+            --accent-success: #059669;
+            --accent-warning: #d97706;
+            --border: #4b5563;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        body { background-color: var(--bg-primary); color: var(--text-main); height: 100vh; display: flex; overflow: hidden; }
+
+        /* Left Chat Console Window */
+        .chat-container { flex: 3; display: flex; flex-direction: column; border-right: 1px solid var(--border); height: 100%; }
+        .chat-header { padding: 20px; background-color: var(--bg-secondary); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 15px; }
+        .chat-header h1 { font-size: 1.25rem; font-weight: 600; }
+        .chat-messages { flex: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 20px; }
+
+        /* Chat Balloon Components */
+        .message { display: flex; gap: 15px; max-width: 85%; animation: fadeIn 0.3s ease; }
+        .message.user { align-self: flex-end; flex-direction: row-reverse; }
+        .message.assistant { align-self: flex-start; }
+        .avatar { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background-color: var(--accent); font-weight: bold; flex-shrink: 0; }
+        .message.user .avatar { background-color: var(--accent-success); }
+        .bubble { padding: 15px; border-radius: 12px; background-color: var(--bg-secondary); border: 1px solid var(--border); line-height: 1.5; font-size: 0.95rem; white-space: pre-wrap; }
+        .message.user .bubble { background-color: var(--accent); border-color: var(--accent); }
+
+        /* Telemetry Performance Badges */
+        .meta-metrics { display: flex; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+        .badge { font-size: 0.75rem; padding: 3px 8px; border-radius: 4px; background-color: var(--bg-surface); border: 1px solid var(--border); color: var(--text-muted); font-weight: 500; display: flex; align-items: center; gap: 5px; }
+        .badge.src-kb { background-color: #1e3a8a; color: #93c5fd; border-color: #2563eb; }
+        .badge.src-web { background-color: #78350f; color: #fde68a; border-color: #d97706; }
+
+        /* Interactive Input Tray */
+        .chat-input-area { padding: 20px; background-color: var(--bg-secondary); border-top: 1px solid var(--border); display: flex; gap: 15px; align-items: center; }
+        .input-wrapper { flex: 1; position: relative; }
+        .input-wrapper input { width: 100%; padding: 14px 20px; background-color: var(--bg-primary); border: 1px solid var(--border); border-radius: 8px; color: var(--text-main); font-size: 1rem; outline: none; transition: border-color 0.2s; }
+        .input-wrapper input:focus { border-color: var(--accent); }
+        .send-btn { padding: 14px 24px; background-color: var(--accent); color: white; border: none; border-radius: 8px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: background-color 0.2s; }
+        .send-btn:hover { background-color: #1d4ed8; }
+
+        /* Right Management Console Sidebar Panel */
+        .admin-sidebar { flex: 1; background-color: var(--bg-secondary); padding: 30px 20px; display: flex; flex-direction: column; gap: 30px; overflow-y: auto; }
+        .sidebar-section { display: flex; flex-direction: column; gap: 15px; }
+        .sidebar-section h2 { font-size: 1.1rem; font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 8px; display: flex; align-items: center; gap: 10px; }
+        .form-group { display: flex; flex-direction: column; gap: 8px; }
+        .form-group label { font-size: 0.85rem; color: var(--text-muted); font-weight: 500; }
+        .form-group input[type="text"], .form-group input[type="file"] { width: 100%; padding: 10px; background-color: var(--bg-primary); border: 1px solid var(--border); border-radius: 6px; color: var(--text-main); outline: none; }
+        .admin-btn { width: 100%; padding: 12px; background-color: var(--bg-surface); color: var(--text-main); border: 1px solid var(--border); border-radius: 6px; font-weight: 600; cursor: pointer; transition: background-color 0.2s, border-color 0.2s; display: flex; align-items: center; justify-content: center; gap: 8px; }
+        .admin-btn:hover { background-color: var(--border); border-color: var(--text-muted); }
+        .admin-btn.active-run { background-color: var(--accent-success); border-color: var(--accent-success); color: white; }
+        .admin-btn.active-run:hover { background-color: #047857; }
+
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body>
+
+    <!-- Main Live Chat Dashboard Area Container -->
+    <div class="chat-container">
+        <div class="chat-header">
+            <div class="avatar"><i class="fa-solid def-icon fa-robot"></i></div>
+            <div>
+                <h1>BankABC POC Enterprise IT Support Copilot</h1>
+                <p style="font-size: 0.8rem; color: var(--text-muted)">Stateful LangGraph Matrix Pipeline Running Offline</p>
+            </div>
+        </div>
+
+        <div class="chat-messages" id="chatMessages">
+            <div class="message assistant">
+                <div class="avatar">AI</div>
+                <div class="bubble">Hello! I am your local IT support assistant. Ask me anything about our Cash Management Solution ABC Cash.</div>
+            </div>
+        </div>
+
+        <div class="chat-input-area">
+            <div class="input-wrapper">
+                <input type="text" id="userInput" placeholder="Ask a support question or say hello..." onkeypress="handleKeyPress(event)">
+            </div>
+            <button class="send-btn" id="sendBtn" onclick="submitUserMessage()">
+                <span>Send</span><i class="fa-solid fa-paper-plane"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Administrative Data Sync Panel Sidebar Control Vault -->
+    <div class="admin-sidebar">
+        <div class="sidebar-section">
+            <h2><i class="fa-solid fa-folder-plus"></i> Add Company Document</h2>
+            <div class="form-group">
+                <label for="adminToken">X-Admin-Key Authorization Token</label>
+                <input type="text" id="adminToken" placeholder="Paste access verification token...">
+            </div>
+            <div class="form-group">
+                <label for="documentFile">Select Policy PDF Manual</label>
+                <input type="file" id="documentFile" accept=".pdf">
+            </div>
+            <button class="admin-btn active-run" onclick="uploadAdminDocument()">
+                <i class="fa-solid fa-cloud-arrow-up"></i> Ingest & Re-Index KB
+            </button>
+        </div>
+
+        <div class="sidebar-section">
+            <h2><i class="fa-solid fa-server"></i> System Topologies</h2>
+            <div class="form-group">
+                <label>LLM Orchestrator Core</label>
+                <input type="text" value="Qwen-2.5 14B (Local)" disabled style="opacity: 0.6;">
+            </div>
+            <div class="form-group">
+                <label>Embedding Vector Model</label>
+                <input type="text" value="BGE-M3 (Local)" disabled style="opacity: 0.6;">
+            </div>
+            <div class="form-group">
+                <label>Vector Storage Engine</label>
+                <input type="text" value="Qdrant Local File System" disabled style="opacity: 0.6;">
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

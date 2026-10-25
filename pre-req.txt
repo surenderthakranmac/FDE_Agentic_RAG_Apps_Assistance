@@ -1,0 +1,69 @@
+mkdir -p ~/Enterprise-IT-Copilot/app/{api,core,rag,services} ~/Enterprise-IT-Copilot/data/Lectures ~/Enterprise-IT-Copilot/{static/css,static/js,templates,qdrant_storage}
+cd ~/Enterprise-IT-Copilot
+
+
+Enterprise-IT-Copilot/
+├── app/
+│   ├── api/          # FastAPI Route entry points
+│   ├── core/         # System Settings & SIEM Logger
+│   ├app/rag/
+            ├── __init__.py
+            ├── state.py           # State definition dictionary schema (Already Built)
+            ├── tools.py           # Outbound Tavily Search Client API wrapper interface
+            ├── reranker.py        # Local High-Precision Cosine Similarity Matrix math 
+            ├── nodes.py           # Hardened processing graph nodes (Router, Ingest, Generator)
+            ├── edges.py           # Conditional logical direction switcher routines
+            └── workflow.py        # Clean, lightweight pipeline composition entry point
+│   ├── services/     # Native PDF Ingestion & Auditing
+│   └── main.py       # FastAPI Initialization Application
+├── data/
+│   └── Lectures/     # Drop your local PDF lecture or policy assets here
+├── qdrant_storage/   # Local directory where Qdrant vectors write to disk
+├── static/           # UI styles and interactive JS scripts
+├── templates/        # Main frontend UI HTML markup
+└── requirements.txt
+conda config --set proxy_servers.http http://10.150.203.27:8080
+conda config --set proxy_servers.https http://10.150.203.27:8080
+
+
+conda create -n FDE_Agentic_RAG_Apps_Assistance python=3.11 numpy -y
+
+
+
+# 3. Activate your new custom workspace environment
+conda activate FDE_Agentic_RAG_Apps_Assistance
+
+
+
+#                                                                                                      
+# To activate this environment, use                                                                    
+#                                                                                                      
+#     $ conda activate local_rag_copilot                                                               
+#                                                                                                      
+# To deactivate an active environment, use
+#
+#     $ conda deactivate
+
+[System.Environment]::SetEnvironmentVariable("HTTP_PROXY", "http://10.150.203.27:8080", "User")
+[System.Environment]::SetEnvironmentVariable("HTTPS_PROXY", "http://10.150.203.27:8080", "User")
+
+ollama pull qwen2.5:7b
+
+ollama pull bge-m3
+
+
+# 1. Update your persistent User Environment Variables
+[System.Environment]::SetEnvironmentVariable("NO_PROXY", "127.0.0.1,localhost,localhost:11434", "User")
+
+# 2. Apply it immediately to your current active terminal session
+$env:NO_PROXY = "127.0.0.1,localhost,localhost:11434"
+
+ Stop-Process -Name "ollama" -Force
+
+ ollama ps
+
+
+# 2. Bulk install all requirements from your text configuration file
+pip install -r requirements.txt
+# 4. Verify that the correct local Python interpreter is active
+which python
