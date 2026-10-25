@@ -86,60 +86,82 @@ def node_route_question(state: AgentState):
 # ============================================================
 # 🔄 LANGGRAPH NODES CIRCUIT
 # ============================================================
-
-
 def node_retrieve_kb(state: AgentState):
-    """Executes local hybrid dense + sparse vector lookups over local files."""
+    """
+    Executes local hybrid dense + sparse vector lookups over local files.
+    Optimized with high prefetch capacities to ensure deep pages bypass top overview text.
+    """
     query = state["current_query"]
-    logger.info("Starting hybrid retrieval query scan over Qdrant matrix indices")
+    logger.info(f"🔍 Starting hybrid retrieval query scan for: '{query}'")
 
+    # Generate the dense and sparse search criteria parameters safely
     dense_q = ollama.embeddings(model=settings.embedding_model, prompt=query)[
         "embedding"
     ]
     sparse_q = generate_sparse_vector(query)
 
-    # 🟢 PROGRAMMATIC SINGLETON INJECTION SAFELY BYPASSES COLLISION LOOPS
-    # active_client = get_safe_qdrant_client()
+    # Format the sparse vector fields explicitly into matching Qdrant schema types
+    sparse_vector_obj = models.SparseVector(
+        indices=sparse_q["indices"], values=sparse_q["values"]
+    )
+
+    # Allow a wider search sweep margin so actual system data isn't dropped by introductions
+    candidate_pool_limit = (
+        settings.top_k * 5
+    )  # If top_k is 4, look across top 20 variants
 
     search_hits = qdrant_client.query_points(
         collection_name=settings.collection_name,
         prefetch=[
-            models.Prefetch(query=dense_q, using="dense-node", limit=settings.top_k),
+            # Over-fetch entries from dense and sparse vector indices independently
             models.Prefetch(
-                query=models.SparseVector(**sparse_q),
-                using="sparse-node",
-                limit=settings.top_k,
+                query=dense_q, using="dense-node", limit=candidate_pool_limit
+            ),
+            models.Prefetch(
+                query=sparse_vector_obj, using="sparse-node", limit=candidate_pool_limit
             ),
         ],
         query=models.FusionQuery(fusion=models.Fusion.RRF),
-        limit=settings.top_k,
+        limit=candidate_pool_limit,  # Hand over a complete candidate array list to your reranker
     )
 
-    refined_context = local_rerank_nodes(query, search_hits.points)
+    retrieved_points = search_hits.points
+    logger.info(
+        f"📊 Qdrant raw hybrid prefetch collected {len(retrieved_points)} potential points for re-ranking."
+    )
+
+    # Let your local cross-encoder filter out the generic text blocks
+    refined_context = local_rerank_nodes(query, retrieved_points)
+
+    # Cap the final text payload sent down to the LLM to fit within your prompt constraints
+    logger.info(
+        f"📥 Reranker sequence completed. Content string length passed: {len(str(refined_context))} chars."
+    )
+
     return {"kb_docs": refined_context}
 
 
 def node_grade_kb_evidence(state: AgentState):
     """Evaluates if the extracted information satisfies factual limits."""
-    user_query = state.get('question', '').lower()
-    
+    user_query = state.get("question", "").lower()
+
     # ──► 🛡️ CORPORATE KEYWORD INTERCEPT OVERRIDE
     corporate_keywords = [
-        "urbis", 
-        "data dictionary", 
-        "client", 
-        "account", 
-        "general ledger", 
-        "on demand", 
-        "gui card"
+        "urbis",
+        "data dictionary",
+        "client",
+        "account",
+        "general ledger",
+        "on demand",
+        "gui card",
     ]
-    
+
     # If the user asks about core systems, immediately force a 'good' rating and pass 0 tokens spent
     if any(keyword in user_query for keyword in corporate_keywords):
         grade_target = "good"
         accumulated_p = state.get("prompt_tokens", 0)
         accumulated_c = state.get("completion_tokens", 0)
-        
+
         logger.info(
             "🎯 [Corporate Keyword Match] Bypassing LLM grading loop and forcing 'good' status constraint.",
             extra={
@@ -164,7 +186,7 @@ def node_grade_kb_evidence(state: AgentState):
     User Query: {state['question']}
     JSON Output:
     """
-    
+
     response = ollama.generate(model=settings.llm_model, prompt=prompt, format="json")
     grade_target = "good" if "good" in response["response"].lower() else "weak"
 
@@ -192,19 +214,18 @@ def node_grade_kb_evidence(state: AgentState):
     }
 
 
-
 def node_search_web_fallback(state: AgentState):
     """Routes query execution paths down outbound Tavily search tools."""
     query = state["current_query"]
     # web_snippet_payload = InternetSearchTool.execute(query, max_results=2)    #uncomment this line to enable live Tavily search, but ensure you have a valid API key and network access.
-    
+
     # ──► This exact literal string object is returned here:
     web_snippet_payload = "Sorry webs search is turned off for this demo."
-    
+
     # Python automatically merges this dictionary right into your AgentState context parameters!
     return {
         "web_results": web_snippet_payload,  # state["web_results"] becomes this string
-        "source_used": "web_search"           # state["source_used"] updates to this string
+        "source_used": "web_search",  # state["source_used"] updates to this string
     }
 
 
@@ -244,7 +265,37 @@ def node_rewrite_query(state: AgentState):
 
 def node_generate_from_kb(state: AgentState):
     """Synthesizes factual system declarations using private database context."""
-    prompt = f"Using ONLY these company rules: {state['kb_docs']}. Clear answer this question: {state['question']}"
+    context_docs = state.get("kb_docs", "")
+    question = state["question"]
+
+    # 🧪 DEVELOPMENT DEBUGGER: Prints exactly what text is being passed to Qwen
+    print(
+        "\n"
+        + "=" * 50
+        + "\n🔥 RETRIEVED CONTEXT PASSED TO LLM:\n"
+        + str(context_docs)[:1000]
+        + "\n"
+        + "=" * 50
+        + "\n"
+    )
+
+    if not context_docs or str(context_docs).strip() == "":
+        logger.warning("⚠️ Generation node received an empty 'kb_docs' context window!")
+
+    prompt = f"""
+    You are an expert enterprise IT support assistant for BankABC.
+    Answer the user's question using ONLY the provided corporate context sections below.
+    If the context does not contain the answer, explain clearly that you lack sufficient source data.
+
+    Corporate Reference Context:
+    ---------------------
+    {context_docs}
+    ---------------------
+
+    User Question: {question}
+    Answer:
+    """
+
     response = ollama.generate(model=settings.llm_model, prompt=prompt)
 
     p_tokens = response.get("prompt_eval_count", 0)
@@ -262,12 +313,13 @@ def node_generate_from_web(state: AgentState):
     """Synthesizes responses using public search metadata components."""
     """Generates an answer based on web search context or handles fallback."""
     web_results = state.get("web_results", "")
-    
+
     # Catch your fallback message cleanly
     if "turned off" in str(web_results).lower():
         return {
             "generation": "I am currently running in an air-gapped secure corporate mode. External web search is disabled to protect BankABC data privacy. Please rephrase your query based on our internal reference documents.",
-            "steps_taken": state.get("steps_taken", []) + ["generate_from_web_fallback_node"]
+            "steps_taken": state.get("steps_taken", [])
+            + ["generate_from_web_fallback_node"],
         }
     prompt = f"Using ONLY these public network web notes: {state['web_results']}. Clear answer this question: {state['question']}"
     response = ollama.generate(model=settings.llm_model, prompt=prompt)
@@ -292,7 +344,9 @@ def node_direct_answer(state: AgentState):
     User Query: {state['question']}
     """
 
-    response = ollama.generate(model=settings.llm_model, prompt=prompt ) #state["question"])
+    response = ollama.generate(
+        model=settings.llm_model, prompt=prompt
+    )  # state["question"])
 
     p_tokens = response.get("prompt_eval_count", 0)
     c_tokens = response.get("eval_count", 0)

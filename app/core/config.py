@@ -13,12 +13,13 @@ class Settings(BaseSettings):
     app_env: str = "development"
 
     # 🌲 LOCAL OLLAMA HARDWARE CONFIGURATIONS
-    llm_model: str = "qwen2.5:7b"
+    # llm_model: str = "qwen2.5:7b"
+    llm_model: str = "qwen2.5:14b"
     embedding_model: str = "bge-m3"
 
     # 📦 LOCAL STORAGE VAULT SETTINGS
     qdrant_path: str = str(BASE_DIR / "qdrant_storage")
-    collection_name: str = "enterprise_it_kb" # Set fallback default string
+    collection_name: str = "enterprise_it_kb"  # Set fallback default string
     lectures_folder: str = "/Users/surendersinghthakran/Masai-AI ML/Lectures"
 
     # 🌍 CLOUD CONNECTIONS AND SECURE ACCESS TOKENS
@@ -26,7 +27,7 @@ class Settings(BaseSettings):
     admin_api_key: str = ""
 
     # 🗃️ COMPONENT ENGINE PATH PARAMETERS
-    top_k: int = 3
+    top_k: int = 10
     max_retries: int = 1
     audit_db_path: str = str(BASE_DIR / "data" / "audit.db")
     upload_dir: str = str(BASE_DIR / "uploads")
