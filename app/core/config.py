@@ -13,8 +13,8 @@ class Settings(BaseSettings):
     app_env: str = "development"
 
     # 🌲 LOCAL OLLAMA HARDWARE CONFIGURATIONS
-    # llm_model: str = "qwen2.5:7b"
-    llm_model: str = "qwen2.5:14b"
+    llm_model: str = "qwen2.5:7b"
+    # llm_model: str = "qwen2.5:14b"
     embedding_model: str = "bge-m3"
 
     # 📦 LOCAL STORAGE VAULT SETTINGS
@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     admin_api_key: str = ""
 
     # 🗃️ COMPONENT ENGINE PATH PARAMETERS
-    top_k: int = 10
+    top_k: int = 100
     max_retries: int = 1
     audit_db_path: str = str(BASE_DIR / "data" / "audit.db")
     upload_dir: str = str(BASE_DIR / "uploads")

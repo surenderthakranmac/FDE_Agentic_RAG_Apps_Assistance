@@ -45,32 +45,22 @@ Description: Subclasses the standard LangChain RecursiveCharacterTextSplitter
              to enforce sentence packing layout rules with strict token backup loops.
 """
 
-
 class EnterpriseHybridTextSplitter(RecursiveCharacterTextSplitter):
     """
     Inherits structural character separation priorities from LangChain, adding
     deterministic regex logic to isolate sentences and enforce explicit maximum length guards.
     """
-
     def __init__(self, max_words: int = 400, **kwargs):
-        """
-        Initializes the custom splitter parameters.
-        :param max_words: Hard ceiling for total words packed inside an individual chunk.
-        """
         super().__init__(**kwargs)
         self.max_words = max_words
 
     def split_text(self, text: str) -> List[str]:
-        """
-        Slices text strings by recursively walking paragraph breaks, then refines
-        them via sentence tracking boundaries to keep contextual concepts together.
-        """
         # Step 1: Utilize parent character rules (\n\n, \n) to form base blocks
         base_blocks = super().split_text(text)
         final_hybrid_chunks = []
 
         for block in base_blocks:
-            # Step 2: Use custom negative-lookbehind regex to accurately split sentences
+            # Step 2: Clean sentence boundary isolation regex rules
             sentences = re.split(
                 r"(?<!\w\.\w.)(?<![A-Z][a-z]\.)(?<=\.|\?)\s+", block.strip()
             )
@@ -80,35 +70,37 @@ class EnterpriseHybridTextSplitter(RecursiveCharacterTextSplitter):
 
             for sentence in sentences:
                 words = sentence.split()
+                if not words:
+                    continue
 
-                # Critical Fallback Branch: Handle huge tables or unpunctuated system logs
+                # Critical Fallback: Handle huge uninterrupted text segments safely
                 if len(words) > self.max_words:
-                    # Flush any previously accumulated structural buffer chunks
                     if current_chunk:
                         final_hybrid_chunks.append(" ".join(current_chunk))
                         current_chunk = []
                         current_count = 0
 
-                    # Direct mathematical stride slice to guarantee context alignment
                     for i in range(0, len(words), self.max_words):
                         sub_slice = words[i : i + self.max_words]
                         final_hybrid_chunks.append(" ".join(sub_slice))
                     continue
 
-                # Normal packing operation check: Flush if constraints would be violated
-                if current_count + len(words) > self.max_words and current_chunk:
-                    final_hybrid_chunks.append(" ".join(current_chunk))
-                    current_chunk = []
-                    current_count = 0
+                # Clean Buffer Management: Flush safely when constraints are crossed
+                if current_count + len(words) > self.max_words:
+                    if current_chunk:
+                        final_hybrid_chunks.append(" ".join(current_chunk))
+                    current_chunk = [sentence]
+                    current_count = len(words)
+                else:
+                    current_chunk.append(sentence)
+                    current_count += len(words)
 
-                current_chunk.append(sentence)
-                current_count += len(words)
-
-            # Clear remaining buffered lines out of loop frame limits
+            # Flush out remaining sentences gracefully
             if current_chunk:
                 final_hybrid_chunks.append(" ".join(current_chunk))
 
         return final_hybrid_chunks
+
 
 
 """
@@ -285,20 +277,37 @@ def run_native_ingestion(force_reindex: bool = False):
             if ext.endswith(".pdf"):
                 loader = PyMuPDFLoader(file_path)
                 lc_pages = loader.load()
-
+                
+                full_document_text_list = []
+                
+                # Step 1: Accumulate text globally first, inserting clean tracking anchors
                 for doc_page in lc_pages:
                     page_text = doc_page.page_content
                     page_num = doc_page.metadata.get("page", 0) + 1
-
+                    
                     if page_text.strip():
+                        # Anchor the text with clear structural page boundaries
+                        tagged_text = f"\n\n[PAGE_START_{page_num}]\n{page_text}\n[PAGE_END_{page_num}]\n\n"
+                        full_document_text_list.append(tagged_text)
                         file_text_accumulator.append(page_text)
 
-                        # Apply hybrid chunk partitioning dynamically at the individual page frame boundaries
-                        page_slices = text_splitter.split_text(page_text)
-                        for slice_text in page_slices:
-                            # Prepend clean string metadata context parameters to text chunks
-                            metadata_enhanced_text = f"[Source: {file_name} | Page: {page_num}]\n{slice_text}"
-                            file_chunks_accumulator.append(metadata_enhanced_text)
+                # Step 2: Split the unified entire document text as a single stream
+                unified_doc_string = "".join(full_document_text_list)
+                document_slices = text_splitter.split_text(unified_doc_string)
+                
+                # Step 3: Extract and assign page numbers to metadata based on anchors
+                for slice_text in document_slices:
+                    # Find which page tag this slice belongs to (default fallback to 1)
+                    page_match = re.search(r'\[PAGE_START_(\d+)\]', slice_text)
+                    detected_page = page_match.group(1) if page_match else "Unknown"
+                    
+                    # Clean the raw page markers from final text so they don't pollute vectors
+                    clean_slice = re.sub(r'\[PAGE_START_\d+\]|\[PAGE_END_\d+\]', '', slice_text).strip()
+                    
+                    if clean_slice:
+                        metadata_enhanced_text = f"[Source: {file_name} | Page: {detected_page}]\n{clean_slice}"
+                        file_chunks_accumulator.append(metadata_enhanced_text)
+
 
             # Process Microsoft Word files using paragraph extraction
             elif ext.endswith(".docx"):
