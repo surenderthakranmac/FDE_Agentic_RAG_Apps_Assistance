@@ -11,6 +11,9 @@ import json
 import pickle
 import time
 from typing import List
+import fitz  # Raw PyMuPDF engine for asset extraction
+import io
+from PIL import Image  # Ensure pillow is installed: pip install pillow
 
 # ─── LANGCHAIN CORE FRAMEWORK UTILITIES ───
 from langchain_community.document_loaders import PyMuPDFLoader
@@ -45,11 +48,13 @@ Description: Subclasses the standard LangChain RecursiveCharacterTextSplitter
              to enforce sentence packing layout rules with strict token backup loops.
 """
 
+
 class EnterpriseHybridTextSplitter(RecursiveCharacterTextSplitter):
     """
     Inherits structural character separation priorities from LangChain, adding
     deterministic regex logic to isolate sentences and enforce explicit maximum length guards.
     """
+
     def __init__(self, max_words: int = 400, **kwargs):
         super().__init__(**kwargs)
         self.max_words = max_words
@@ -100,7 +105,6 @@ class EnterpriseHybridTextSplitter(RecursiveCharacterTextSplitter):
                 final_hybrid_chunks.append(" ".join(current_chunk))
 
         return final_hybrid_chunks
-
 
 
 """
@@ -274,52 +278,104 @@ def run_native_ingestion(force_reindex: bool = False):
 
         try:
             # Upgrade implementation pattern to utilize PyMuPDFLoader layout logic
+            # Upgrade implementation pattern to utilize PyMuPDF layout + vision logic
+            # Upgrade implementation pattern to utilize PyMuPDF layout + vision logic
             if ext.endswith(".pdf"):
-                loader = PyMuPDFLoader(file_path)
-                lc_pages = loader.load()
-                
+                doc_file = fitz.open(file_path)
                 full_document_text_list = []
-                
-                # Step 1: Accumulate text globally first, inserting clean tracking anchors
-                for doc_page in lc_pages:
-                    page_text = doc_page.page_content
-                    page_num = doc_page.metadata.get("page", 0) + 1
-                    
-                    if page_text.strip():
-                        # Anchor the text with clear structural page boundaries
-                        tagged_text = f"\n\n[PAGE_START_{page_num}]\n{page_text}\n[PAGE_END_{page_num}]\n\n"
+
+                for page_idx in range(len(doc_file)):
+                    page = doc_file[page_idx]
+                    page_num = page_idx + 1
+                    page_text = page.get_text()
+
+                    page_accumulator = [page_text]
+
+                    # Extract image artifacts embedded on this page layer
+                    image_list = page.get_images(full=True)
+                    if image_list:
+                        logger.info(
+                            f"📸 Processing {len(image_list)} images on Page {page_num} using Qwen2.5-VL 3B..."
+                        )
+
+                        for img_idx, img_meta in enumerate(image_list):
+                            xref = img_meta[0]  # Grab correct index position element
+                            base_image = doc_file.extract_image(xref)
+                            image_bytes = base_image["image"]
+
+                            try:
+                                # 🚀 OPTIMIZATION: Reduce visual token overhead by scaling down images
+                                pil_img = Image.open(io.BytesIO(image_bytes))
+                                max_dim = 1024
+                                if max(pil_img.size) > max_dim:
+                                    pil_img.thumbnail(
+                                        (max_dim, max_dim), Image.Resampling.LANCZOS
+                                    )
+
+                                # Convert back to compact JPEG bytes format
+                                buffer = io.BytesIO()
+                                pil_img.save(buffer, format="JPEG", quality=80)
+                                optimized_image_bytes = buffer.getvalue()
+
+                                # Call the lightweight 3B Vision model via Ollama
+                                response = ollama.chat(
+                                    model="qwen2.5vl:3b",  # ◄ Optimized 3B vision target
+                                    messages=[
+                                        {
+                                            "role": "user",
+                                            "content": (
+                                                "Analyze this system administration screenshot or user manual illustration. "
+                                                "Describe the text headers, input fields, labels, buttons, windows, and system contexts visible "
+                                                "so it can be indexed cleanly for a technical support chatbot."
+                                            ),
+                                            "images": [optimized_image_bytes],
+                                        }
+                                    ],
+                                )
+                                caption_text = response["message"]["content"]
+
+                                visual_context_node = (
+                                    f"\n\n[EMBEDDED_SCREENSHOT_START]\n"
+                                    f"Description of image asset #{img_idx + 1} on page {page_num}: {caption_text}\n"
+                                    f"[EMBEDDED_SCREENSHOT_END]\n\n"
+                                )
+                                page_accumulator.append(visual_context_node)
+
+                            except Exception as vlm_err:
+                                logger.error(
+                                    f"⚠️ 3B VLM processing failed on page {page_num}: {vlm_err}"
+                                )
+                                page_accumulator.append(
+                                    f"\n\n[IMAGE_ASSET_DETECTED_ON_PAGE_{page_num}]\n\n"
+                                )
+
+                    # Anchor the merged text streams with explicit structural boundaries
+                    combined_page_stream = "\n".join(page_accumulator)
+                    if combined_page_stream.strip():
+                        tagged_text = f"\n\n[PAGE_START_{page_num}]\n{combined_page_stream}\n[PAGE_END_{page_num}]\n\n"
                         full_document_text_list.append(tagged_text)
                         file_text_accumulator.append(page_text)
 
-                # Step 2: Split the unified entire document text as a single stream
+                # Step 2: Split the unified multi-modal document text as a single stream
                 unified_doc_string = "".join(full_document_text_list)
                 document_slices = text_splitter.split_text(unified_doc_string)
-                
+
                 # Step 3: Extract and assign page numbers to metadata based on anchors
                 for slice_text in document_slices:
-                    # Find which page tag this slice belongs to (default fallback to 1)
-                    page_match = re.search(r'\[PAGE_START_(\d+)\]', slice_text)
+                    page_match = re.search(r"\[PAGE_START_(\d+)\]", slice_text)
                     detected_page = page_match.group(1) if page_match else "Unknown"
-                    
-                    # Clean the raw page markers from final text so they don't pollute vectors
-                    clean_slice = re.sub(r'\[PAGE_START_\d+\]|\[PAGE_END_\d+\]', '', slice_text).strip()
-                    
+
+                    clean_slice = re.sub(
+                        r"\[PAGE_START_\d+\]|\[PAGE_END_\d+\]|\[EMBEDDED_SCREENSHOT_START\]|\[EMBEDDED_SCREENSHOT_END\]",
+                        "",
+                        slice_text,
+                    ).strip()
+
                     if clean_slice:
                         metadata_enhanced_text = f"[Source: {file_name} | Page: {detected_page}]\n{clean_slice}"
                         file_chunks_accumulator.append(metadata_enhanced_text)
 
-
-            # Process Microsoft Word files using paragraph extraction
-            elif ext.endswith(".docx"):
-                doc = DocxReader(file_path)
-                for paragraph in doc.paragraphs:
-                    if paragraph.text.strip():
-                        file_text_accumulator.append(paragraph.text)
-
-                # Split unified text blocks down into target chunks
-                file_chunks_accumulator = text_splitter.split_text(
-                    "\n".join(file_text_accumulator)
-                )
+                doc_file.close()
 
             # Process Microsoft Excel sheets via cell string concatenation layers
             elif ext.endswith(".xlsx"):

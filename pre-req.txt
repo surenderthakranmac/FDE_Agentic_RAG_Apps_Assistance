@@ -47,7 +47,13 @@ conda activate FDE_Agentic_RAG_Apps_Assistance
 [System.Environment]::SetEnvironmentVariable("HTTP_PROXY", "http://10.150.203.27:8080", "User")
 [System.Environment]::SetEnvironmentVariable("HTTPS_PROXY", "http://10.150.203.27:8080", "User")
 
-ollama pull qwen2.5:7b
+ollama pull qwen2.5:7b. #LLM
+
+The cleanest architectural approach for your offline architecture is 
+to extract images using PyMuPDF (fitz), describe them via a local Vision-Language Model (VLM) 
+using your existing ollama client, and inject the description inline with the text context before the document is chunked by your EnterpriseHybridTextSplitter.
+ollama pull qwen2.5vl:7b
+
 
 ollama pull bge-m3
 
